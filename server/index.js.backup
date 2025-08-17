@@ -1,20 +1,21 @@
 import express from 'express';
 import cors from 'cors';
-import { createClient } from '@libsql/client';
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
 import { providers, callProvider } from './providers.js';
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '50mb' })); // Increase payload limit
 
-// Turso cloud database connection
-const turso = createClient({
-  url: 'libsql://multi-ai-chat-elsascarlett.aws-us-east-1.turso.io',
-  authToken: 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NTU0MzQ2NDAsImlkIjoiYTk3NWNmMDgtMmYzNy00YTk2LTlmN2QtMDM2YzdlMmU5NTI0IiwicmlkIjoiZjc4ODIzMDYtYWQ0OS00NGZhLTgwMjYtMmI2NjM1NWQzYjVmIn0.5ZJimu7qZwJe5-BSTlL50Ht0zyZ3JjQjP8mI2M4EnWftlXA-IOzsQO3ucKm9JZe_FMglKD8HKrlYEiIwovazBg'
+const dbPromise = open({
+  filename: './chat.db',
+  driver: sqlite3.Database,
 });
 
 async function initDB() {
-  await turso.execute(`
+  const db = await dbPromise;
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       role TEXT NOT NULL,
@@ -88,9 +89,9 @@ app.get('/api/providers', (req, res) => {
   res.json({ providers });
 });
 
-// Infinite AI conversation endpoint - CLOUD DATABASE VERSION
+// Infinite AI conversation endpoint - FIXED VERSION
 app.get('/api/infinite-chat', async (req, res) => {
-  console.log('=== Starting enhanced infinite AI conversation (Cloud DB) ===');
+  console.log('=== Starting enhanced infinite AI conversation ===');
   
   try {
     const selectedProviders = req.query.selectedProviders ? req.query.selectedProviders.split(',') : ['llama3.2:3b'];
@@ -104,10 +105,9 @@ app.get('/api/infinite-chat', async (req, res) => {
     // Keep conversation history much shorter to avoid payload issues
     let conversationHistory = [];
 
-    await turso.execute({
-      sql: 'INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)',
-      args: ['user', topic, 'infinite-chat']
-    });
+    const db = await dbPromise;
+    await db.run('INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)', 
+      ['user', topic, 'infinite-chat']);
 
     let messageCount = 0;
     let isActive = true;
@@ -193,11 +193,9 @@ app.get('/api/infinite-chat', async (req, res) => {
           provider: providerId
         });
 
-        // Save to cloud database
-        await turso.execute({
-          sql: 'INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)',
-          args: ['assistant', reply, providerId]
-        });
+        // Save to database
+        await db.run('INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)', 
+          ['assistant', reply, providerId]);
 
         // Keep conversation history very short (last 15 messages max)
         if (conversationHistory.length > 15) {
@@ -253,7 +251,7 @@ app.get('/api/infinite-chat', async (req, res) => {
   }
 });
 
-// Regular chat endpoint
+// Regular chat endpoint (unchanged)
 app.post('/api/chat', async (req, res) => {
   console.log('=== Single round chat request received ===');
   
@@ -271,10 +269,9 @@ app.post('/api/chat', async (req, res) => {
     const responses = [];
     let conversationHistory = [...messages];
     
-    await turso.execute({
-      sql: 'INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)',
-      args: ['user', userMessage, 'user']
-    });
+    const db = await dbPromise;
+    await db.run('INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)', 
+      ['user', userMessage, 'user']);
 
     for (let i = 0; i < selectedProviders.length; i++) {
       const providerId = selectedProviders[i];
@@ -317,10 +314,8 @@ app.post('/api/chat', async (req, res) => {
           provider: providerId
         });
 
-        await turso.execute({
-          sql: 'INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)',
-          args: ['assistant', reply, providerId]
-        });
+        await db.run('INSERT INTO messages (role, content, provider) VALUES (?, ?, ?)', 
+          ['assistant', reply, providerId]);
 
       } catch (error) {
         console.error(`ERROR with provider ${providerId}:`, error.message);
@@ -349,11 +344,12 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Get chat history from cloud database
+// Get chat history
 app.get('/api/messages', async (req, res) => {
   try {
-    const result = await turso.execute('SELECT * FROM messages ORDER BY timestamp');
-    res.json({ messages: result.rows });
+    const db = await dbPromise;
+    const messages = await db.all('SELECT * FROM messages ORDER BY timestamp');
+    res.json({ messages });
   } catch (error) {
     console.error('Error getting messages:', error);
     res.status(500).json({ error: 'Failed to get messages' });
@@ -363,20 +359,19 @@ app.get('/api/messages', async (req, res) => {
 initDB().then(() => {
   app.listen(3001, () => {
     console.log('Server running on http://localhost:3001');
-    console.log('Connected to Turso cloud database');
     console.log('Available providers:', providers.map(p => p.name).join(', '));
     console.log('Endpoints available:');
     console.log('  /api/providers - Get available AI models');
     console.log('  /api/chat - Single round multi-AI chat');
-    console.log('  /api/infinite-chat - Enhanced infinite AI conversation');
+    console.log('  /api/infinite-chat - Fixed infinite AI conversation');
     console.log('  /api/messages - Get chat history');
     console.log('');
-    console.log('Cloud features enabled:');
-    console.log('  - Persistent conversation storage');
-    console.log('  - Unlimited conversation history');
-    console.log('  - No more memory crashes');
-    console.log('  - Cross-device access to same conversations');
+    console.log('Fixed issues:');
+    console.log('  - Reduced payload size to prevent HTTP errors');
+    console.log('  - Better error handling for unresponsive models'); 
+    console.log('  - Improved conversation flow and recovery');
+    console.log('  - Shorter context windows for stability');
   });
 }).catch(error => {
-  console.error('Failed to initialize cloud database:', error);
+  console.error('Failed to initialize database:', error);
 });
