@@ -32,3 +32,9 @@ node_modules/
 client/node_modules/
 chat.db
 client/build/
+chat.db
+uploads/
+uploads/outputs/
+node_modules/
+client/node_modules/
+apps/web/node_modules/
