@@ -38,3 +38,7 @@ uploads/outputs/
 node_modules/
 client/node_modules/
 apps/web/node_modules/
+chat.db
+uploads/
+uploads/outputs/
+.env
